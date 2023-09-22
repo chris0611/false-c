@@ -311,6 +311,39 @@ static int parse_number(const char *src, const int64_t src_len, int64_t *idx) {
     return strtol(buffer, NULL, 10);
 }
 
+static int64_t string_constants = 0;
+
+static const char *string_codegen_fmt =
+    "jmp .print_str%ld\n"
+    "section .rodata\n"
+    ".L.str%ld: "
+    "db '%s'\n"
+    "section .text\n"
+    ".print_str%ld:\n"
+    "xor eax, eax\n"
+    "inc eax\n"
+    "xor edi, edi\n"
+    "inc edi\n"
+    "lea rsi, [rel .L.str%ld]\n"
+    "mov rdx, %ld\n"
+    "push rcx\n"
+    "syscall\n"
+    "pop rcx\n";
+
+static void string_codegen(false_program *prog, char *str_start, char *str_end) {
+    const int64_t len = (intptr_t)str_end - (intptr_t)str_start;
+    // fixme: arbitrary sizes. Consider using dynamic allocation?
+    char str_buf[512] = {0};
+    char fmt_buf[1024] = {0};
+
+    assert(len != 511 && "String constant too long!\n");
+    memcpy(str_buf, str_start, len);
+
+    int64_t snum = string_constants++;
+    int64_t written = snprintf(fmt_buf, 1024, string_codegen_fmt, snum, snum,
+                               str_buf, snum, snum, len);
+    append_code(prog, fmt_buf, written);
+}
 
 void compile_false_program(false_program *prog) {
     char *code = mmap(NULL, CODEGEN_SIZE, PROT_READ |
@@ -356,14 +389,31 @@ void compile_false_program(false_program *prog) {
             do {
                 idx++;
                 if (idx == prog->source_len) {
-                    fprintf(stderr, "Error: No matching '}'\nQuitting..\n");
+                    fprintf(stderr, "Error: No closing '}'\nQuitting...\n");
                     abort();
                 }
             } while ((sym = prog->source[idx]) != '}');
+            continue;
         }
 
         // handle string constants
+        if (ch == '"') {
+            char sym;
+            int64_t idx = i;
+            char *str_start = &prog->source[idx + 1];
+            do {
+                idx++;
 
+                if (idx == prog->source_len) {
+                    fprintf(stderr, "Error: No matching '\"'\nQuitting...\n");
+                    abort();
+                }
+            } while ((sym = prog->source[idx]) != '"');
+
+            string_codegen(prog, str_start, &prog->source[idx]);
+            i = idx;
+            continue;
+        }
     }
 
     append_code(prog, codegen_epilouge, strlen(codegen_epilouge));

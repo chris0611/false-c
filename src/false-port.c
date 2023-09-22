@@ -10,7 +10,7 @@
 #include "cmdline.h"
 #include "compile.h"
 
-#define M68K_CODE "\x20\x1d\x72\x00\x24\x78\x00\x04\xc5\x4e\x4e\xae\xff\x3a\xc5\x4e\x2b\x00"
+#define M68K_CODE "\x22\x08\x4e\xae\xfc\x4c"
 
 int main(int argc, char *argv[]) {
     false_program main_prog = {

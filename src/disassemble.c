@@ -12,7 +12,7 @@ char *machinecode_to_assembly(const uint8_t *code, int64_t len) {
         return NULL;
     }
 
-    count = cs_disasm(handle, code, len, 0x1000, 0, &insn);
+    count = cs_disasm(handle, code, len, 0x0000, 0, &insn);
     if (count == 0) {
         cs_err err = cs_errno(handle);
         fprintf(stderr, "Failed to disassemble given code: %s\n", cs_strerror(err));
@@ -21,7 +21,11 @@ char *machinecode_to_assembly(const uint8_t *code, int64_t len) {
 
     // print instructions
     for (size_t i = 0; i < count; i++) {
-        printf("0x%"PRIx64":\t%s\t\t%s\n", insn[i].address, insn[i].mnemonic, insn[i].op_str);
+        printf("0x%"PRIx64":\t", insn[i].address);
+        for (size_t j = 0; j < insn[i].size; j++) {
+            printf("%02hhx ", insn[i].bytes[j]);
+        }
+        printf("\t%s\t%s\n", insn[i].mnemonic, insn[i].op_str);
     }
 
     cs_free(insn, count);
