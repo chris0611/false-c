@@ -4,13 +4,10 @@
 #include <string.h>
 #include <assert.h>
 
-#include "disassemble.h"
 #include "falseprog.h"
 #include "util.h"
 #include "cmdline.h"
 #include "compile.h"
-
-#define M68K_CODE "\x22\x08\x4e\xae\xfc\x4c"
 
 int main(int argc, char *argv[]) {
     false_program main_prog = {
@@ -21,13 +18,12 @@ int main(int argc, char *argv[]) {
         .code_len = 0,
         .source = NULL,
         .source_len = 0,
+        .last_codegen_len = 0
     };
 
     if (!read_cmdline_opts(&main_prog, argc, argv)) {
         return EXIT_FAILURE;
     }
-
-    machinecode_to_assembly((const uint8_t*)M68K_CODE, sizeof(M68K_CODE)-1);
 
     if (!main_prog.opts.read_stdin) {
         main_prog.source = map_file(main_prog.infile, &main_prog.source_len);
@@ -36,8 +32,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (main_prog.source == NULL) {
-        fprintf(stderr, "Fatal error: Quitting...\n");
-        return EXIT_FAILURE;
+        err_and_die("Failed to read source code");
     }
 
     compile_false_program(&main_prog);

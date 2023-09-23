@@ -112,7 +112,6 @@ char *find_filename_prefix(const char *filename) {
     char *base = basename(filename);
     const char *offset = base;
 
-
     while ((tmp_length = strcspn(offset, ".")) != 0) {
         prefix_length += tmp_length;
         offset += tmp_length;
@@ -123,4 +122,13 @@ char *find_filename_prefix(const char *filename) {
 
     memcpy(prefix, base, prefix_length);
     return prefix;
+}
+
+#define ANSI_RED    "\033[0;31m"
+#define ANSI_RESET  "\033[0m"
+
+[[noreturn]]
+void err_and_die(const char *errmsg) {
+    fprintf(stderr, ANSI_RED "Error: " ANSI_RESET " %s\n", errmsg);
+    exit(EXIT_FAILURE);
 }

@@ -11,6 +11,7 @@
 
 #include "falseprog.h"
 #include "compile.h"
+#include "util.h"
 
 #define CODEGEN_SIZE 65536
 
@@ -138,7 +139,7 @@ static const symbol_codegen codegen_lookup[256] = {
     ['!'] = CODEGEN_STR(
         "mov eax, [rcx]\n"
         "add rcx, 4\n"
-        "call rax\n"
+        "call rax\n"    // fixme: have to somehow make sure that addresses are < UINT32_MAX, since we just load 32-bits
     ),
     // Store into variable
     [':'] = CODEGEN_STR(
@@ -165,12 +166,12 @@ static const symbol_codegen codegen_lookup[256] = {
     ),
     // Conditionally execute
     ['?'] = CODEGEN_STR(
-        "mov eax, [rcx]\n"
-        "mov rdx, [rcx+4]\n"
-        "add ecx, 2\n"
-        "test eax, eax\n"
-        "je .f\n"
-        "call rdx\n"
+        "mov eax, [rcx]\n"      // lambda
+        "mov edx, [rcx+4]\n"    // condition
+        "add rcx, 8\n"          // pop stack
+        "test edx, edx\n"       // check for zero
+        "je .f\n"               // if zero, don't exec lambda
+        "call rax\n"            // if not, exec
         ".f:\n"
     ),
     // Duplicate top of stack
@@ -221,33 +222,34 @@ static const symbol_codegen codegen_lookup[256] = {
         "not dword [rcx]\n"
     ),
     // Compare greater than
-    // TODO: Check that comparison is done in right order...
     ['>'] = CODEGEN_STR(
         "mov eax, [rcx]\n"
         "cmp [rcx+4], eax\n"
         "setg al\n"
-        "add ecx, 4\n"
+        "add rcx, 4\n"
         "movzx eax, al\n"
         "neg eax\n"
         "mov [rcx], eax\n"
     ),
     // While loop (takes two lambdas as operands)
     ['#'] = CODEGEN_STR(
-        "mov eax, [rcx]\n"
-        "mov edx, [rcx+4]\n"
-        "add ecx, 8\n"
+        "mov eax, [rcx]\n"      // lambda we want to conditionally execute
+        "mov edx, [rcx+4]\n"    // lambda that tests whether we do
+        "add rcx, 8\n"          // pop off calc-stack
+        "push rax\n"            // push onto (normal) stack
         "push rdx\n"
-        "push rax\n"
-        ".s:\n"
-        "mov eax, [esp+4]\n" // fixme: this is probably wrong
+        ".s:\n"                 // ## loop begin ##
+        "mov eax, [rsp+8]\n"    // fixme: this is probably wrong (is index multiplied or not?)
         "call rax\n"
+        "mov eax, [rcx]\n"      // result from stack
+        "add rcx, 4\n"
         "test eax, eax\n"
-        "je .e\n"
-        "mov rax, [esp]\n"
-        "call rax\n"
-        "jmp .s\n"
+        "je .e\n"               // exit loop
+        "mov rax, [rsp]\n"      // execute "loop body"
+        "call rax\n"            // --||--
+        "jmp .s\n"              // start loop again
         ".e:\n"
-        "add esp, 8\n"
+        "add rsp, 16\n"         // pop lambda addrs from stack
     ),
     // putchar
     [','] = CODEGEN_STR(
@@ -278,12 +280,11 @@ static const symbol_codegen codegen_lookup[256] = {
 static void append_code(false_program *restrict prog, const char *code,
                         int64_t code_len) {
     if (prog->code_len + code_len > CODEGEN_SIZE) {
-        fprintf(stderr, "Error: Maximum size for generated code reached\n");
-        fprintf(stderr, "Quitting...\n");
-        abort();
+        err_and_die("Maximum code size reached\n");
     }
     memcpy(&prog->code[prog->code_len], code, code_len);
     prog->code_len += code_len;
+    prog->last_codegen_len = code_len;
 }
 
 static const char *number_codegen_fmt =
@@ -336,13 +337,39 @@ static void string_codegen(false_program *prog, char *str_start, char *str_end) 
     char str_buf[512] = {0};
     char fmt_buf[1024] = {0};
 
-    assert(len != 511 && "String constant too long!\n");
+    assert(len <= 511 && "String constant too long!\n");
     memcpy(str_buf, str_start, len);
 
     int64_t snum = string_constants++;
     int64_t written = snprintf(fmt_buf, 1024, string_codegen_fmt, snum, snum,
                                str_buf, snum, snum, len);
     append_code(prog, fmt_buf, written);
+}
+
+
+static const char *inline_x86_codegen_fmt =
+    "db 0x%02hhx, 0x%02hhx, 0x%02hhx, 0x%02hhx ; INLINE ASSEMBLER\n";
+
+// fixme: this is cursed?
+static void inline_assembler_codegen(false_program *prog) {
+    char *current_pos = &prog->code[prog->code_len];
+
+    // find last number pushed onto stack
+    char ch;
+    int64_t offset = 0;
+    while ((ch = current_pos[offset]) != ' ') {
+        offset--;
+    }
+
+    // get number
+    const int32_t num = strtol(&current_pos[offset], NULL, 10);
+    const uint8_t *num_bytes = (uint8_t*)&num;
+
+    char buffer[256] = {0};
+    const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num_bytes[0],
+                                     num_bytes[1], num_bytes[2], num_bytes[3]);
+    prog->code_len -= prog->last_codegen_len;
+    append_code(prog, buffer, written);
 }
 
 void compile_false_program(false_program *prog) {
@@ -380,7 +407,7 @@ void compile_false_program(false_program *prog) {
             continue;
         }
 
-        // check for ø and ß
+        // TODO: check for ø and ß
 
         // skip comments
         if (ch == '{') {
@@ -389,10 +416,10 @@ void compile_false_program(false_program *prog) {
             do {
                 idx++;
                 if (idx == prog->source_len) {
-                    fprintf(stderr, "Error: No closing '}'\nQuitting...\n");
-                    abort();
+                    err_and_die("Unterminated comment!\nA closing '}' is required");
                 }
             } while ((sym = prog->source[idx]) != '}');
+            i = idx;
             continue;
         }
 
@@ -405,14 +432,26 @@ void compile_false_program(false_program *prog) {
                 idx++;
 
                 if (idx == prog->source_len) {
-                    fprintf(stderr, "Error: No matching '\"'\nQuitting...\n");
-                    abort();
+                    err_and_die("Unterminated string constant!");
                 }
             } while ((sym = prog->source[idx]) != '"');
 
             string_codegen(prog, str_start, &prog->source[idx]);
             i = idx;
             continue;
+        }
+
+        if (ch == '`') {
+            inline_assembler_codegen(prog);
+            continue;
+        }
+
+        if (ch == '[') {
+            err_and_die("Lambdas are not implemented yet!");
+        }
+
+        if (ch == ']') {
+            err_and_die("Lambdas are not implemented yet!");
         }
     }
 
@@ -422,6 +461,7 @@ void compile_false_program(false_program *prog) {
     strcpy(prog->asm_fname, "false-tmpXXXXXX.asm");
     int asmfd = mkstemps(prog->asm_fname, 4);
     assert(asmfd != -1 && "Couldn't make a temporary file! :(");
+
     int res = write(asmfd, prog->code, prog->code_len);
     if (res < 0) {
         fprintf(stderr, "Error: Failed to write to file: %s\n", strerror(errno));
@@ -430,15 +470,13 @@ void compile_false_program(false_program *prog) {
 }
 
 void assemble_false_program(false_program *prog) {
-    // fixme: generate name based on input program name
     strcpy(prog->obj_fname, "false-tmpXXXXXX.o");
     int objfd = mkstemps(prog->obj_fname, 2);
     assert(objfd != -1 && "Couldn't make a temporary file! :(");
 
     pid_t cpid = vfork();
     if (cpid < 0) {
-        fprintf(stderr, "Error: vfork() failed\nQuitting...\n");
-        abort();
+        err_and_die("vfork() failed");
     }
 
     if (cpid == 0) {
@@ -450,11 +488,10 @@ void assemble_false_program(false_program *prog) {
         int wstatus;
         wait(&wstatus);
         if (WIFEXITED(wstatus) && (WEXITSTATUS(wstatus) == EXIT_FAILURE)) {
-            fprintf(stderr, "Error: Failed to invoke nasm\nQuitting...\n");
             close(objfd);
             unlink(prog->asm_fname);
             unlink(prog->obj_fname);
-            abort();
+            err_and_die("Failed to invoke nasm");
         }
 
         close(objfd);
@@ -466,8 +503,7 @@ void assemble_false_program(false_program *prog) {
 void link_false_program(false_program *prog) {
     pid_t cpid = vfork();
     if (cpid < 0) {
-        fprintf(stderr, "Error: vfork() failed\nQuitting...\n");
-        abort();
+        err_and_die("vfork() failed");
     }
 
     if (cpid == 0) {
@@ -479,9 +515,8 @@ void link_false_program(false_program *prog) {
         int wstatus;
         wait(&wstatus);
         if (WIFEXITED(wstatus) && (WEXITSTATUS(wstatus) == EXIT_FAILURE)) {
-            fprintf(stderr, "Error: Failed to invoke linker\nQuitting...\n");
             unlink(prog->obj_fname);
-            abort();
+            err_and_die("Failed to invoke linker");
         }
         // don't need object file anymore
         unlink(prog->obj_fname);

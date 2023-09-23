@@ -23,6 +23,7 @@ typedef struct false_program {
     int64_t code_len;   // length of the generated assembly
     char asm_fname[32];
     char obj_fname[32];
+    int64_t last_codegen_len;
 } false_program;
 
 #endif /* FALSE_C_PROG_H */

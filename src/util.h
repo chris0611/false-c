@@ -23,4 +23,7 @@ char *build_filename(const char *prefix, const char *suffix);
     gets the name of the file before the last '.' */
 char *find_filename_prefix(const char *filename);
 
+[[noreturn]]
+void err_and_die(const char *errmsg);
+
 #endif /* FALSE_C_UTIL_H */
