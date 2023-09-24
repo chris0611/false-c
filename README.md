@@ -19,7 +19,7 @@ How to compile the program, from the project root directory:
 Then, you can either pipe in the program you want to compile, or specify a file with `-f <file>`.
 
 Examples:
-`echo -n "2 4+." | ./build/false-c-port` (generates an executable named "false_prog" by default)
+`echo -n "2 4+." | ./build/false-c-port` (generates an executable named "false-prog" by default)
 
 `./build/false-c-port -f program.fls -o program` (generates an executable named "program")
 
@@ -28,3 +28,7 @@ Examples:
 My recommendation is to assemble the code you want with your favorite assembler, and get a hexdump of the output.
 Then, you can convert 4 and 4 bytes of those into decimal. This will be your input.
 Note that instructions might not cleanly map into multiples of 4 bytes, so pad with no-ops where necessary.
+
+## Why?
+
+For fun and profit :^)

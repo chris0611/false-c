@@ -272,6 +272,12 @@ static const symbol_codegen codegen_lookup[256] = {
         "push rcx\n"
         "syscall\n"
         "pop rcx\n"
+    ),
+    // Pick from stack (0xF8 is the ISO 8859-1 encoding for 'ø')
+    [(uint8_t)'\xF8'] = CODEGEN_STR(
+        "movsxd rax, dword [rcx]\n"
+        "mov eax, dword [rcx + 4*rax + 4]\n"
+        "mov dword [rcx], eax\n"
     )
 };
 
@@ -346,9 +352,12 @@ static void string_codegen(false_program *prog, char *str_start, char *str_end) 
     append_code(prog, fmt_buf, written);
 }
 
-
+/*
 static const char *inline_x86_codegen_fmt =
     "db 0x%02hhx, 0x%02hhx, 0x%02hhx, 0x%02hhx ; INLINE ASSEMBLER\n";
+*/
+static const char *inline_x86_codegen_fmt =
+    "dd 0x%08x ; INLINE ASSEMBLER\n";
 
 // fixme: this is cursed?
 static void inline_assembler_codegen(false_program *prog) {
@@ -363,11 +372,14 @@ static void inline_assembler_codegen(false_program *prog) {
 
     // get number
     const int32_t num = strtol(&current_pos[offset], NULL, 10);
-    const uint8_t *num_bytes = (uint8_t*)&num;
+    //  const uint8_t *num_bytes = (uint8_t*)&num;
 
     char buffer[256] = {0};
+
+    const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num);
+    /*
     const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num_bytes[0],
-                                     num_bytes[1], num_bytes[2], num_bytes[3]);
+                                     num_bytes[1], num_bytes[2], num_bytes[3]);*/
     prog->code_len -= prog->last_codegen_len;
     append_code(prog, buffer, written);
 }
@@ -407,7 +419,19 @@ void compile_false_program(false_program *prog) {
             continue;
         }
 
-        // TODO: check for ø and ß
+        // Start of UTF-8 encoding for both 'ø' and 'ß'
+        if (ch == '\xC3') {
+            if ((i + 1) == prog->source_len) break;
+            if (prog->source[i + 1] == '\x9F') {
+                // just skip ß (no buffered i/o)
+                i++;
+            } else if (prog->source[i + 1] == '\xB8') {
+                const symbol_codegen *gen = &codegen_lookup[(uint8_t)'\xF8'];
+                append_code(prog, gen->code, gen->bytes-1);
+                i++;
+            }
+            continue;
+        }
 
         // skip comments
         if (ch == '{') {
