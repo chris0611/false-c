@@ -11,22 +11,20 @@ bool read_cmdline_opts(false_program *prog, int argc, char *argv[]) {
     while ((opt = getopt(argc, argv, "cSf:o:")) != -1) {
         switch (opt) {
         case 'S':
-            prog->opts.output_assembly = true;
-            prog->opts.output_executable = false;
-            prog->opts.output_objfile = false;
+            prog->opts &= ~OUTPUT_MASK;
+            prog->opts |= OUTPUT_ASSEMBLY;
             break;
         case 'c':
-            prog->opts.output_assembly = false;
-            prog->opts.output_objfile = true;
-            prog->opts.output_executable = false;
+            prog->opts &= ~OUTPUT_MASK;
+            prog->opts |= OUTPUT_OBJFILE;
             break;
         case 'f':
-            prog->opts.read_stdin = false;
+            prog->opts &= ~READ_STDIN;
             prog->infile = optarg;
             break;
         case 'o':
             prog->outfile = optarg;
-            prog->opts.has_outfile_name = true;
+            prog->opts |= HAS_OUTFILE_NAME;
             break;
         default:
             fprintf(stderr, "Usage: %s [-c] [-S] [-f infile] [-o outfile]\n", argv[0]);

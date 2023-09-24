@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <endian.h>
 
 #include "falseprog.h"
 #include "compile.h"
@@ -376,7 +377,7 @@ static void inline_assembler_codegen(false_program *prog) {
 
     char buffer[256] = {0};
 
-    const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num);
+    const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, be32toh(num));
     /*
     const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num_bytes[0],
                                      num_bytes[1], num_bytes[2], num_bytes[3]);*/
@@ -403,9 +404,7 @@ void compile_false_program(false_program *prog) {
             continue;
         }
 
-        // If we got here, the symbol is either an
-        // alphanumeric character or some unknown symbol
-
+        // Number constant
         if (ch >= '0' && ch <= '9') {
             // Pass i as param because number might be several characters long
             const int num = parse_number(prog->source, prog->source_len, &i);
