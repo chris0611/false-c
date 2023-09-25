@@ -137,10 +137,11 @@ static const symbol_codegen codegen_lookup[256] = {
         "pop rcx\n"
     ),
     // Execute lambda
+    // fixme: somehow make sure that addresses are < UINT32_MAX, since we just load 32-bits
     ['!'] = CODEGEN_STR(
         "mov eax, [rcx]\n"
         "add rcx, 4\n"
-        "call rax\n"    // fixme: have to somehow make sure that addresses are < UINT32_MAX, since we just load 32-bits
+        "call rax\n"
     ),
     // Store into variable
     [':'] = CODEGEN_STR(
@@ -171,9 +172,9 @@ static const symbol_codegen codegen_lookup[256] = {
         "mov edx, [rcx+4]\n"    // condition
         "add rcx, 8\n"          // pop stack
         "test edx, edx\n"       // check for zero
-        "je .f\n"               // if zero, don't exec lambda
+        "je short 3\n"          // if zero, don't exec lambda
         "call rax\n"            // if not, exec
-        ".f:\n"
+        //".f:\n"
     ),
     // Duplicate top of stack
     ['$'] = CODEGEN_STR(
@@ -190,7 +191,7 @@ static const symbol_codegen codegen_lookup[256] = {
         "mov eax, [rcx]\n"
         "mov edx, [rcx+4]\n"
         "mov [rcx], edx\n"
-        "mov [rcx+1], eax\n"
+        "mov [rcx+4], eax\n"
     ),
     // Rotate top three elements
     ['@'] = CODEGEN_STR(
@@ -208,14 +209,14 @@ static const symbol_codegen codegen_lookup[256] = {
     ['&'] = CODEGEN_STR(
         "mov eax, [rcx]\n"
         "and eax, [rcx+4]\n"
-        "add ecx, 4\n"
+        "add rcx, 4\n"
         "mov [rcx], eax\n"
     ),
     // Bitwise or
     ['|'] = CODEGEN_STR(
         "mov eax, [rcx]\n"
         "or eax, [rcx+4]\n"
-        "add ecx, 4\n"
+        "add rcx, 4\n"
         "mov [rcx], eax\n"
     ),
     // Bitwise not
@@ -234,22 +235,22 @@ static const symbol_codegen codegen_lookup[256] = {
     ),
     // While loop (takes two lambdas as operands)
     ['#'] = CODEGEN_STR(
-        "mov eax, [rcx]\n"      // lambda we want to conditionally execute
-        "mov edx, [rcx+4]\n"    // lambda that tests whether we do
+        "mov eax, [rcx]\n"      // lambda (while-loop body)
+        "mov edx, [rcx+4]\n"    // lambda (conditional)
         "add rcx, 8\n"          // pop off calc-stack
         "push rax\n"            // push onto (normal) stack
         "push rdx\n"
-        ".s:\n"                 // ## loop begin ##
-        "mov eax, [rsp+8]\n"    // fixme: this is probably wrong (is index multiplied or not?)
+        // loop start
+        "mov eax, [rsp]\n"      // get conditional lambda
         "call rax\n"
         "mov eax, [rcx]\n"      // result from stack
-        "add rcx, 4\n"
+        "add rcx, 4\n"          // pop it
         "test eax, eax\n"
-        "je .e\n"               // exit loop
-        "mov rax, [rsp]\n"      // execute "loop body"
-        "call rax\n"            // --||--
-        "jmp .s\n"              // start loop again
-        ".e:\n"
+        "je short 10\n"         // exit loop
+        "mov rax, [rsp+8]\n"
+        "call rax\n"            // execute "loop body"
+        "jmp short -23\n"       // start loop again
+        // loop exit
         "add rsp, 16\n"         // pop lambda addrs from stack
     ),
     // putchar
@@ -267,12 +268,17 @@ static const symbol_codegen codegen_lookup[256] = {
     ['^'] = CODEGEN_STR(
         "sub rcx, 4\n"
         "xor eax, eax\n"
+        "mov [rcx], eax\n"
         "xor edi, edi\n"  // stdin
         "mov rsi, rcx\n"
         "mov rdx, 1\n"
         "push rcx\n"
         "syscall\n"
         "pop rcx\n"
+        "mov eax, [rcx]\n"
+        "test eax, eax\n"
+        "jnz short 3\n"
+        "not dword [rcx]\n"
     ),
     // Pick from stack (0xF8 is the ISO 8859-1 encoding for 'ø')
     [(uint8_t)'\xF8'] = CODEGEN_STR(
@@ -319,13 +325,11 @@ static int parse_number(const char *src, const int64_t src_len, int64_t *idx) {
     return strtol(buffer, NULL, 10);
 }
 
-static int64_t string_constants = 0;
-
 static const char *string_codegen_fmt =
     "jmp .print_str%ld\n"
     "section .rodata\n"
     ".L.str%ld: "
-    "db '%s'\n"
+    "db `%s`\n"
     "section .text\n"
     ".print_str%ld:\n"
     "xor eax, eax\n"
@@ -339,13 +343,22 @@ static const char *string_codegen_fmt =
     "pop rcx\n";
 
 static void string_codegen(false_program *prog, char *str_start, char *str_end) {
+    static int64_t string_constants = 0;
     const int64_t len = (intptr_t)str_end - (intptr_t)str_start;
     // fixme: arbitrary sizes. Consider using dynamic allocation?
     char str_buf[512] = {0};
     char fmt_buf[1024] = {0};
 
-    assert(len <= 511 && "String constant too long!\n");
-    memcpy(str_buf, str_start, len);
+    // fixme: check length
+    int64_t buf_idx = 0;
+    for (int64_t i = 0; i < len; i++) {
+        if (str_start[i] != '\n') {
+            str_buf[buf_idx++] = str_start[i];
+            continue;
+        }
+        str_buf[buf_idx++] = '\\';
+        str_buf[buf_idx++] = 'n';
+    }
 
     int64_t snum = string_constants++;
     int64_t written = snprintf(fmt_buf, 1024, string_codegen_fmt, snum, snum,
@@ -353,10 +366,6 @@ static void string_codegen(false_program *prog, char *str_start, char *str_end) 
     append_code(prog, fmt_buf, written);
 }
 
-/*
-static const char *inline_x86_codegen_fmt =
-    "db 0x%02hhx, 0x%02hhx, 0x%02hhx, 0x%02hhx ; INLINE ASSEMBLER\n";
-*/
 static const char *inline_x86_codegen_fmt =
     "dd 0x%08x ; INLINE ASSEMBLER\n";
 
@@ -373,16 +382,36 @@ static void inline_assembler_codegen(false_program *prog) {
 
     // get number
     const int32_t num = strtol(&current_pos[offset], NULL, 10);
-    //  const uint8_t *num_bytes = (uint8_t*)&num;
-
     char buffer[256] = {0};
 
     const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, be32toh(num));
-    /*
-    const int64_t written = snprintf(buffer, 256, inline_x86_codegen_fmt, num_bytes[0],
-                                     num_bytes[1], num_bytes[2], num_bytes[3]);*/
+
     prog->code_len -= prog->last_codegen_len;
     append_code(prog, buffer, written);
+}
+
+static const char *lambda_entry_codegen_fmt =
+    "lea rax, [rel .lambda%1$d]\n"
+    "sub rcx, 4\n"
+    "mov [rcx], eax\n"      // this is not ideal, the address of a lambda cannot be > UINT_MAX
+    "jmp .lambda_end%1$d\n" // (a solution could be to store an index into an array of addresses instead)
+    ".lambda%1$d:\n";
+
+static const char *lambda_exit_codegen_fmt =
+    "ret\n"
+    ".lambda_end%d:\n";
+
+
+static void lambda_entry_codegen(false_program *prog, int lambda) {
+    char buf[128] = {0};
+    const int64_t written = snprintf(buf, 128, lambda_entry_codegen_fmt, lambda);
+    append_code(prog, buf, written);
+}
+
+static void lambda_exit_codegen(false_program *prog, int lambda) {
+    char buf[128] = {0};
+    const int64_t written = snprintf(buf, 128, lambda_exit_codegen_fmt, lambda);
+    append_code(prog, buf, written);
 }
 
 void compile_false_program(false_program *prog) {
@@ -393,6 +422,10 @@ void compile_false_program(false_program *prog) {
     prog->code = code;
     prog->code_len = 0;
     append_code(prog, codegen_prolouge, strlen(codegen_prolouge));
+
+    int num_lambdas = 0;
+    int lambda_stack[128] = {0};
+    int64_t stack_top = 0;
 
     // main loop
     for (int64_t i = 0; i < prog->source_len; i++) {
@@ -446,7 +479,16 @@ void compile_false_program(false_program *prog) {
             continue;
         }
 
-        // handle string constants
+        // Character literal
+        if (ch == '\'') {
+            if ((i + 1) == prog->source_len) {
+                err_and_die("Character literal is missing character!");
+            }
+            number_codegen(prog, prog->source[++i]);
+            continue;
+        }
+
+        // String literals
         if (ch == '"') {
             char sym;
             int64_t idx = i;
@@ -470,11 +512,15 @@ void compile_false_program(false_program *prog) {
         }
 
         if (ch == '[') {
-            err_and_die("Lambdas are not implemented yet!");
+            lambda_entry_codegen(prog, num_lambdas);
+            lambda_stack[stack_top++] = num_lambdas++;
+            continue;
         }
 
         if (ch == ']') {
-            err_and_die("Lambdas are not implemented yet!");
+            const int lambda = lambda_stack[--stack_top];
+            lambda_exit_codegen(prog, lambda);
+            continue;
         }
     }
 

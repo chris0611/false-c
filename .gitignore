@@ -5,3 +5,9 @@
 !CMakeLists.txt
 !README.md
 !.gitignore
+!examples
+!examples/fib.fls
+!examples/hello.fls
+!examples/inline_x86.fls
+!examples/99bottles.fls
+!examples/primes.fls
