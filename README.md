@@ -17,10 +17,13 @@ Currently only supports x86_64 Linux, with glibc.
 ## Quickstart
 
 Compiling the project is done with the usual cmake commands, from the project root directory:
+
 `cmake -S. -Bbuild && cmake --build build`
+
 Then, to start using the compiler, you can either pipe in the program you want to compile via stdin, or specify a file with `-f <file>`.
 
 Examples:
+
 `echo -n "2 4+." | ./build/false-c` (produces an executable named "false-prog" by default)
 
 `./build/false-c -f program.fls -o program` (produces an executable named "program")
